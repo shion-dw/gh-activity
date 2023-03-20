@@ -33,108 +33,81 @@ const octokit = new Octokit({
   baseUrl: apiUrl,
 });
 
-// 特定の Organization 内のリポジトリ一覧を取得する
-async function getRepositoriesFromOrg (orgName: string) {
-  const repositories: string[] = [];
-  let page = 1;
-  while (page < 100) {
-    const response = await octokit.rest.repos.listForOrg({
-      org: orgName,
-      type: "all",
-      per_page: 100,
-      page,
-    });
-    const repoNames = response.data.map((repo) => repo.name);
-    if(repoNames.length === 0) break;
-    repositories.push(...repoNames);
-    page++;
-  }
-  return [...new Set(repositories)];
-};
-
-// APIを呼び出して、指定された期間内に作成されたIssue、PR、Reviewの数を取得
+// API を呼び出して、指定された期間内に作成された Issue, PR, Review の数を取得
 async function getUserActivity(repoName: string): Promise<Activity> {
   const authorIssues: Issue[] = [];
   const authorPRs: Issue[] = [];
-  let authorPage = 1;
-  while (authorPage < 100) {
-    const { data } = await octokit.rest.issues.listForRepo({
-      owner: org,
-      repo: repoName,
-      creator: userName,
-      state: "all",
-      since: startDate,
-      until: endDate,
-      per_page: 100,
-      page: authorPage,
-    });
-    const issues = data.filter(datum => isIssueOrPullRequest(datum, { isIssue: true }));
-    const prs = data.filter(datum => isIssueOrPullRequest(datum, { isIssue: false }));
-    if (issues.length === 0 && prs.length === 0) break;
-    authorIssues.push(...issues);
-    authorPRs.push(...prs);
-    authorPage++;
-  }
-
   const allIssues: Issue[] = [];
   const allPRs: Issue[] = [];
+
   let page = 1;
+
   while (page < 100) {
-    const { data } = await octokit.rest.issues.listForRepo({
-      owner: org,
-      repo: repoName,
-      state: "all",
-      since: startDate,
-      until: endDate,
-      per_page: 100,
-      page,
-    });
-    const issues = data.filter(datum => isIssueOrPullRequest(datum, { isIssue: true }));
-    const prs = data.filter(datum => isIssueOrPullRequest(datum, {isIssue: false}));
-    if (issues.length === 0 && prs.length === 0) break;
-    allIssues.push(...issues);
-    allPRs.push(...prs);
+    const [authorData, allData] = await Promise.all([
+      octokit.rest.issues.listForRepo({
+        owner: org,
+        repo: repoName,
+        creator: userName,
+        state: "all",
+        since: startDate,
+        until: endDate,
+        per_page: 100,
+        page,
+      }),
+      octokit.rest.issues.listForRepo({
+        owner: org,
+        repo: repoName,
+        state: "all",
+        since: startDate,
+        until: endDate,
+        per_page: 100,
+        page,
+      }),
+    ]);
+
+    const authorIssuesNew = authorData.data.filter((datum) =>
+      isIssueOrPullRequest(datum, { isIssue: true })
+    );
+    const authorPRsNew = authorData.data.filter((datum) =>
+      isIssueOrPullRequest(datum, { isIssue: false })
+    );
+    const allIssuesNew = allData.data.filter((datum) =>
+      isIssueOrPullRequest(datum, { isIssue: true })
+    );
+    const allPRsNew = allData.data.filter((datum) =>
+      isIssueOrPullRequest(datum, { isIssue: false })
+    );
+
+    if (authorIssuesNew.length === 0 && authorPRsNew.length === 0 && allIssuesNew.length === 0 && allPRsNew.length === 0) {
+      break;
+    }
+
+    authorIssues.push(...authorIssuesNew);
+    authorPRs.push(...authorPRsNew);
+    allIssues.push(...allIssuesNew);
+    allPRs.push(...allPRsNew);
+
     page++;
   }
 
-  let commentsCount = 0;
-  for (const issue of allIssues) {
-    const { data: comments } = await octokit.issues.listComments({
-      owner: org,
-      repo: repoName,
-      issue_number: issue.number,
-    });
-    const userComments = comments.filter(isAuthor);
-    commentsCount += userComments.length;
-  }
-
-  let reviewsCount = 0;
-  for (const pullRequest of allPRs) {
-    const { data: reviews } = await octokit.pulls.listReviews({
-      owner: org,
-      repo: repoName,
-      pull_number: pullRequest.number,
-    });
-    const userReviews = reviews.filter(isAuthor);
-    reviewsCount += userReviews.length;
-  }
+  const [authorComments, authorReviews] = await Promise.all([
+    getCommentsByUser(org, repoName, userName, allIssues),
+    getReviewsByUser(org, repoName, userName, allPRs),
+  ]);
 
   return {
     repository: repoName,
     issuesCreated: authorIssues.length,
-    issueCommentsCount: commentsCount,
+    issueCommentsCount: authorComments.length,
     prsCreated: authorPRs.length,
-    prReviewsCount: reviewsCount,
+    prReviewsCount: authorReviews.length,
   };
 }
 
 // 特定の Organization における全リポジトリのユーザーの活動状況を取得する
-async function getAllActivity (orgName: string): Promise<Activity[]> {
+async function getAllActivity(orgName: string): Promise<Activity[]> {
   const repositories = await getRepositoriesFromOrg(orgName);
-  const activities: Promise<Activity>[] = [];
-  for (const repo of repositories) {
-    activities.push(getUserActivity(repo));
-  }
+  const activities = repositories.map((repo) => getUserActivity(repo));
   const results = await Promise.all(activities);
   return results.filter(
     ({ issuesCreated, issueCommentsCount, prsCreated, prReviewsCount }) => {
@@ -146,19 +119,56 @@ async function getAllActivity (orgName: string): Promise<Activity[]> {
       );
     }
   );
-};
+}
 
-async function main() {
-  const activities = await getAllActivity(org);
-  const output = activities.map(
-    ({repository, issuesCreated, issueCommentsCount, prsCreated, prReviewsCount}) => {
-      return `${repository}\n  Issues created: ${issuesCreated}\n  Issue comments: ${issueCommentsCount}\n  PRs created: ${prsCreated}\n  PR reviews: ${prReviewsCount}\n`
-    }
-  );
-  console.log(output.join(""));
-};
+// 特定の Organization 内のリポジトリ一覧を取得する
+async function getRepositoriesFromOrg(orgName: string) {
+  const repositories: string[] = [];
+  let page = 1;
+  while (page < 100) {
+    const response = await octokit.rest.repos.listForOrg({
+      org: orgName,
+      type: "all",
+      per_page: 100,
+      page,
+    });
+    const repoNames = response.data.map((repo) => repo.name);
+    if (repoNames.length === 0) break;
+    repositories.push(...repoNames);
+    page++;
+  }
+  return [...new Set(repositories)];
+}
 
-main().catch((error) => console.error(error));
+// ユーザーが作成した Issue のコメントを取得
+async function getCommentsByUser(orgName: string, repoName: string, userName: string, issues: Issue[]): Promise<Comment[]> {
+  const result: Comment[] = [];
+  for (const issue of issues) {
+    const { data: comments } = await octokit.issues.listComments({
+      owner: orgName,
+      repo: repoName,
+      issue_number: issue.number,
+    });
+    const userComments = comments.filter(comment => isAuthor(comment, userName));
+    result.push(...userComments);
+  }
+  return result;
+}
+
+// ユーザーが作成した PR のレビューを取得
+async function getReviewsByUser(orgName: string, repoName: string, userName: string, prs: Issue[]): Promise<Review[]> {
+  const result: Review[] = [];
+  for (const pullRequest of prs) {
+    const { data: reviews } = await octokit.pulls.listReviews({
+      owner: orgName,
+      repo: repoName,
+      pull_number: pullRequest.number,
+    });
+    const userReviews = reviews.filter(review => isAuthor(review, userName));
+    result.push(...userReviews);
+  }
+  return result;
+}
 
 function isIssueOrPullRequest(
   datum: Issue,
@@ -169,6 +179,16 @@ function isIssueOrPullRequest(
     : typeof datum.pull_request !== "undefined";
 }
 
-function isAuthor(datum: Comment | Review) {
+function isAuthor(datum: Comment | Review, userName: string) {
   return datum.user?.login === userName;
 }
+
+async function main() {
+  const activities = await getAllActivity(org);
+  const output = activities.reduce((acc, { repository, issuesCreated, issueCommentsCount, prsCreated, prReviewsCount }) => {
+    return `${acc}${repository}\n  Issues created: ${issuesCreated}\n  Issue comments: ${issueCommentsCount}\n  PRs created: ${prsCreated}\n  PR reviews: ${prReviewsCount}\n`;
+  }, "");
+  console.log(output);
+}
+
+main().catch((error) => console.error(error));
