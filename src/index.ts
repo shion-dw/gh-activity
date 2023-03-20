@@ -1,5 +1,8 @@
 import { Octokit, RestEndpointMethodTypes } from "@octokit/rest";
+import { retry } from "@octokit/plugin-retry";
 import config from "config";
+
+const RetryOctokit = Octokit.plugin(retry);
 
 type Issue = RestEndpointMethodTypes["issues"]["listForRepo"]["response"]["data"][number];
 type Comment = RestEndpointMethodTypes["issues"]["listComments"]["response"]["data"][number]
@@ -72,7 +75,12 @@ async function getUserActivity(octokit: Octokit, repoName: string): Promise<Acti
       isIssueOrPullRequest(datum, { isIssue: false })
     );
 
-    if (authorIssuesNew.length === 0 && authorPRsNew.length === 0 && allIssuesNew.length === 0 && allPRsNew.length === 0) {
+    if (
+      authorIssuesNew.length === 0 &&
+      authorPRsNew.length === 0 &&
+      allIssuesNew.length === 0 &&
+      allPRsNew.length === 0
+    ) {
       break;
     }
 
@@ -101,9 +109,15 @@ async function getUserActivity(octokit: Octokit, repoName: string): Promise<Acti
 // 特定の Organization における全リポジトリのユーザーの活動状況を取得する
 async function getAllActivity(orgName: string): Promise<Activity[]> {
   // GitHub の API を呼び出すための Octokit クラスを生成
-  const octokit = new Octokit({
+  const octokit = new RetryOctokit({
     auth: githubToken,
     baseUrl: apiUrl,
+    request: {
+      // 最大10回リトライする
+      retries: 10,
+      // リトライの際には3秒インターバルを空ける
+      retryAfter: 3,
+    },
   });
   const repositories = await getRepositoriesFromOrg(octokit, orgName);
   const activities = repositories.map((repo) => getUserActivity(octokit, repo));
