@@ -1,5 +1,5 @@
 {
-  "repo": "GITHUB_REPO",
-  "user": "GITHUB_USER",
+  "org": "GITHUB_ORG",
+  "userName": "GITHUB_USER",
   "githubToken": "GITHUB_TOKEN"
 }
