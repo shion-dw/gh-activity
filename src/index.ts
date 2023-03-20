@@ -27,14 +27,8 @@ const endDate = config.get<string>("endDate");
 // GitHub の API URL を指定
 const apiUrl = config.get<string>("githubApiUrl");
 
-// GitHub の API を呼び出すための Octokit クラスを生成
-const octokit = new Octokit({
-  auth: githubToken,
-  baseUrl: apiUrl,
-});
-
 // API を呼び出して、指定された期間内に作成された Issue, PR, Review の数を取得
-async function getUserActivity(repoName: string): Promise<Activity> {
+async function getUserActivity(octokit: Octokit, repoName: string): Promise<Activity> {
   const authorIssues: Issue[] = [];
   const authorPRs: Issue[] = [];
   const allIssues: Issue[] = [];
@@ -91,8 +85,8 @@ async function getUserActivity(repoName: string): Promise<Activity> {
   }
 
   const [authorComments, authorReviews] = await Promise.all([
-    getCommentsByUser(org, repoName, userName, allIssues),
-    getReviewsByUser(org, repoName, userName, allPRs),
+    getAllCommentsByUser(octokit, org, repoName, userName, allIssues),
+    getAllReviewsByUser(octokit, org, repoName, userName, allPRs),
   ]);
 
   return {
@@ -106,8 +100,13 @@ async function getUserActivity(repoName: string): Promise<Activity> {
 
 // 特定の Organization における全リポジトリのユーザーの活動状況を取得する
 async function getAllActivity(orgName: string): Promise<Activity[]> {
-  const repositories = await getRepositoriesFromOrg(orgName);
-  const activities = repositories.map((repo) => getUserActivity(repo));
+  // GitHub の API を呼び出すための Octokit クラスを生成
+  const octokit = new Octokit({
+    auth: githubToken,
+    baseUrl: apiUrl,
+  });
+  const repositories = await getRepositoriesFromOrg(octokit, orgName);
+  const activities = repositories.map((repo) => getUserActivity(octokit, repo));
   const results = await Promise.all(activities);
   return results.filter(
     ({ issuesCreated, issueCommentsCount, prsCreated, prReviewsCount }) => {
@@ -122,7 +121,7 @@ async function getAllActivity(orgName: string): Promise<Activity[]> {
 }
 
 // 特定の Organization 内のリポジトリ一覧を取得する
-async function getRepositoriesFromOrg(orgName: string) {
+async function getRepositoriesFromOrg(octokit: Octokit, orgName: string) {
   const repositories: string[] = [];
   let page = 1;
   while (page < 100) {
@@ -140,34 +139,46 @@ async function getRepositoriesFromOrg(orgName: string) {
   return [...new Set(repositories)];
 }
 
-// ユーザーが作成した Issue のコメントを取得
-async function getCommentsByUser(orgName: string, repoName: string, userName: string, issues: Issue[]): Promise<Comment[]> {
-  const result: Comment[] = [];
-  for (const issue of issues) {
-    const { data: comments } = await octokit.issues.listComments({
+// ユーザーが書き込んだ Issue コメント群を取得
+async function getAllCommentsByUser(
+  octokit: Octokit,
+  orgName: string,
+  repoName: string,
+  userName: string,
+  issues: Issue[]
+): Promise<Comment[]> {
+  const promises = issues.map((issue) =>
+    octokit.issues.listComments({
       owner: orgName,
       repo: repoName,
       issue_number: issue.number,
-    });
-    const userComments = comments.filter(comment => isAuthor(comment, userName));
-    result.push(...userComments);
-  }
-  return result;
+    })
+  );
+  const results = await Promise.all(promises);
+  return results.flatMap(({ data }) =>
+    data.filter((comment) => isAuthor(comment, userName))
+  );
 }
 
-// ユーザーが作成した PR のレビューを取得
-async function getReviewsByUser(orgName: string, repoName: string, userName: string, prs: Issue[]): Promise<Review[]> {
-  const result: Review[] = [];
-  for (const pullRequest of prs) {
-    const { data: reviews } = await octokit.pulls.listReviews({
+// ユーザーが書き込んだ PR レビュー群を取得
+async function getAllReviewsByUser(
+  octokit: Octokit,
+  orgName: string,
+  repoName: string,
+  userName: string,
+  prs: Issue[]
+): Promise<Review[]> {
+  const promises = prs.map((pullRequest) =>
+    octokit.pulls.listReviews({
       owner: orgName,
       repo: repoName,
       pull_number: pullRequest.number,
-    });
-    const userReviews = reviews.filter(review => isAuthor(review, userName));
-    result.push(...userReviews);
-  }
-  return result;
+    })
+  );
+  const results = await Promise.all(promises);
+  return results.flatMap(({ data }) =>
+    data.filter((review) => isAuthor(review, userName))
+  );
 }
 
 function isIssueOrPullRequest(
