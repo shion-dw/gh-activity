@@ -1,6 +1,10 @@
+import * as fs from "fs";
+import * as path from "path";
 import { Octokit, RestEndpointMethodTypes } from "@octokit/rest";
 import { retry } from "@octokit/plugin-retry";
 import config from "config";
+
+const outputDir = path.join(__dirname, "../output");
 
 const RetryOctokit = Octokit.plugin(retry);
 
@@ -210,10 +214,28 @@ function isAuthor(datum: Comment | Review, userName: string) {
 
 async function main() {
   const activities = await getAllActivity(org);
-  const output = activities.reduce((acc, { repository, issuesCreated, issueCommentsCount, prsCreated, prReviewsCount }) => {
-    return `${acc}${repository}\n  Issues created: ${issuesCreated}\n  Issue comments: ${issueCommentsCount}\n  PRs created: ${prsCreated}\n  PR reviews: ${prReviewsCount}\n`;
-  }, "");
-  console.log(output);
+  const csvHeader =
+    "Repository,Issues created,Issue comments,PRs created,PR reviews\n";
+  const csvRows = activities.reduce(
+    (
+      acc,
+      {
+        repository,
+        issuesCreated,
+        issueCommentsCount,
+        prsCreated,
+        prReviewsCount,
+      }
+    ) => {
+      return `${acc}"${repository}",${issuesCreated},${issueCommentsCount},${prsCreated},${prReviewsCount}\n`;
+    },
+    ""
+  );
+  const csvContent = csvHeader + csvRows;
+  const filename = path.join(outputDir, "activities.csv");
+  fs.mkdirSync(outputDir, { recursive: true });
+  fs.writeFileSync(filename, csvContent);
+  console.log(`CSV file has been saved to ${filename}`);
 }
 
 main().catch((error) => console.error(error));

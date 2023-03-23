@@ -214,3 +214,6 @@ dist
 
 ### direnv ###
 .envrc
+
+### Original ###
+output
