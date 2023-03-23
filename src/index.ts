@@ -51,7 +51,6 @@ async function getUserActivity(octokit: Octokit, repoName: string): Promise<Acti
         creator: userName,
         state: "all",
         since: startDate,
-        until: endDate,
         per_page: 100,
         page,
       }),
@@ -60,24 +59,23 @@ async function getUserActivity(octokit: Octokit, repoName: string): Promise<Acti
         repo: repoName,
         state: "all",
         since: startDate,
-        until: endDate,
         per_page: 100,
         page,
       }),
     ]);
 
-    const authorIssuesNew = authorData.data.filter((datum) =>
-      isIssueOrPullRequest(datum, { isIssue: true })
-    );
-    const authorPRsNew = authorData.data.filter((datum) =>
-      isIssueOrPullRequest(datum, { isIssue: false })
-    );
-    const allIssuesNew = allData.data.filter((datum) =>
-      isIssueOrPullRequest(datum, { isIssue: true })
-    );
-    const allPRsNew = allData.data.filter((datum) =>
-      isIssueOrPullRequest(datum, { isIssue: false })
-    );
+    const authorIssuesNew = authorData.data
+      .filter((datum) => isIssueOrPullRequest(datum, { isIssue: true }))
+      .filter(createdBeforeEndDate);
+    const authorPRsNew = authorData.data
+      .filter((datum) => isIssueOrPullRequest(datum, { isIssue: false }))
+      .filter(createdBeforeEndDate);
+    const allIssuesNew = allData.data
+      .filter((datum) => isIssueOrPullRequest(datum, { isIssue: true }))
+      .filter(createdBeforeEndDate);
+    const allPRsNew = allData.data
+      .filter((datum) => isIssueOrPullRequest(datum, { isIssue: false }))
+      .filter(createdBeforeEndDate);
 
     if (
       authorIssuesNew.length === 0 &&
@@ -157,6 +155,10 @@ async function getRepositoriesFromOrg(octokit: Octokit, orgName: string) {
   return [...new Set(repositories)];
 }
 
+function createdBeforeEndDate(issue: Issue): boolean {
+  return new Date(issue.created_at) <= new Date(endDate)
+}
+
 // ユーザーが書き込んだ Issue コメント群を取得
 async function getAllCommentsByUser(
   octokit: Octokit,
@@ -214,6 +216,14 @@ function isAuthor(datum: Comment | Review, userName: string) {
 
 async function main() {
   const activities = await getAllActivity(org);
+
+  // 標準出力
+  const output = activities.reduce((acc, { repository, issuesCreated, issueCommentsCount, prsCreated, prReviewsCount }) => {
+    return `${acc}${repository}\n  Issues created: ${issuesCreated}\n  Issue comments: ${issueCommentsCount}\n  PRs created: ${prsCreated}\n  PR reviews: ${prReviewsCount}\n`;
+  }, "");
+  console.log(output);
+
+  // csv 出力
   const csvHeader =
     "Repository,Issues created,Issue comments,PRs created,PR reviews\n";
   const csvRows = activities.reduce(
