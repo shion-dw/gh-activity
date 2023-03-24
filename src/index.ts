@@ -27,15 +27,19 @@ const githubToken = config.get<string>("githubToken");
 const org = config.get<string>("org");
 const userName = config.get<string>("userName");
 
-// 開始日と終了日を指定（ ISO8601 ）
-const startDate = config.get<string>("startDate");
-const endDate = config.get<string>("endDate");
+// 開始日と終了日の配列を指定（ ISO8601 ）
+const terms = config.get<{ startDate: string; endDate: string }[]>("terms");
 
 // GitHub の API URL を指定
 const apiUrl = config.get<string>("githubApiUrl");
 
 // API を呼び出して、指定された期間内に作成された Issue, PR, Review の数を取得
-async function getUserActivity(octokit: Octokit, repoName: string): Promise<Activity> {
+async function getUserActivity(
+  octokit: Octokit,
+  repoName: string,
+  startDate: string,
+  endDate: string
+): Promise<Activity> {
   const authorIssues: Issue[] = [];
   const authorPRs: Issue[] = [];
   const allIssues: Issue[] = [];
@@ -66,16 +70,16 @@ async function getUserActivity(octokit: Octokit, repoName: string): Promise<Acti
 
     const authorIssuesNew = authorData.data
       .filter((datum) => isIssueOrPullRequest(datum, { isIssue: true }))
-      .filter(createdBeforeEndDate);
+      .filter(createdBeforeEndDate(endDate));
     const authorPRsNew = authorData.data
       .filter((datum) => isIssueOrPullRequest(datum, { isIssue: false }))
-      .filter(createdBeforeEndDate);
+      .filter(createdBeforeEndDate(endDate));
     const allIssuesNew = allData.data
       .filter((datum) => isIssueOrPullRequest(datum, { isIssue: true }))
-      .filter(createdBeforeEndDate);
+      .filter(createdBeforeEndDate(endDate));
     const allPRsNew = allData.data
       .filter((datum) => isIssueOrPullRequest(datum, { isIssue: false }))
-      .filter(createdBeforeEndDate);
+      .filter(createdBeforeEndDate(endDate));
 
     if (
       authorIssuesNew.length === 0 &&
@@ -109,7 +113,11 @@ async function getUserActivity(octokit: Octokit, repoName: string): Promise<Acti
 }
 
 // 特定の Organization における全リポジトリのユーザーの活動状況を取得する
-async function getAllActivity(orgName: string): Promise<Activity[]> {
+async function getAllActivity(
+  orgName: string,
+  startDate: string,
+  endDate: string
+): Promise<Activity[]> {
   // GitHub の API を呼び出すための Octokit クラスを生成
   const octokit = new RetryOctokit({
     auth: githubToken,
@@ -122,7 +130,9 @@ async function getAllActivity(orgName: string): Promise<Activity[]> {
     },
   });
   const repositories = await getRepositoriesFromOrg(octokit, orgName);
-  const activities = repositories.map((repo) => getUserActivity(octokit, repo));
+  const activities = repositories.map((repo) =>
+    getUserActivity(octokit, repo, startDate, endDate)
+  );
   const results = await Promise.all(activities);
   return results.filter(
     ({ issuesCreated, issueCommentsCount, prsCreated, prReviewsCount }) => {
@@ -155,8 +165,10 @@ async function getRepositoriesFromOrg(octokit: Octokit, orgName: string) {
   return [...new Set(repositories)];
 }
 
-function createdBeforeEndDate(issue: Issue): boolean {
-  return new Date(issue.created_at) <= new Date(endDate)
+function createdBeforeEndDate(endDate: string) {
+  return (issue: Issue): boolean => {
+    return new Date(issue.created_at) <= new Date(endDate);
+  };
 }
 
 // ユーザーが書き込んだ Issue コメント群を取得
@@ -215,37 +227,65 @@ function isAuthor(datum: Comment | Review, userName: string) {
 }
 
 async function main() {
-  const activities = await getAllActivity(org);
-
-  // 標準出力
-  const output = activities.reduce((acc, { repository, issuesCreated, issueCommentsCount, prsCreated, prReviewsCount }) => {
-    return `${acc}${repository}\n  Issues created: ${issuesCreated}\n  Issue comments: ${issueCommentsCount}\n  PRs created: ${prsCreated}\n  PR reviews: ${prReviewsCount}\n`;
-  }, "");
-  console.log(output);
-
-  // csv 出力
-  const csvHeader =
-    "Repository,Issues created,Issue comments,PRs created,PR reviews\n";
-  const csvRows = activities.reduce(
-    (
-      acc,
-      {
-        repository,
-        issuesCreated,
-        issueCommentsCount,
-        prsCreated,
-        prReviewsCount,
-      }
-    ) => {
-      return `${acc}"${repository}",${issuesCreated},${issueCommentsCount},${prsCreated},${prReviewsCount}\n`;
-    },
-    ""
+  const activities = await Promise.all(
+    terms.map(async (term) => {
+      const activities = await getAllActivity(
+        org,
+        term.startDate,
+        term.endDate
+      );
+      return { term, activities };
+    })
   );
-  const csvContent = csvHeader + csvRows;
-  const filename = path.join(outputDir, "activities.csv");
-  fs.mkdirSync(outputDir, { recursive: true });
-  fs.writeFileSync(filename, csvContent);
-  console.log(`CSV file has been saved to ${filename}`);
+
+  activities.forEach(({ term, activities }) => {
+    // 標準出力
+    const output = activities.reduce(
+      (
+        acc,
+        {
+          repository,
+          issuesCreated,
+          issueCommentsCount,
+          prsCreated,
+          prReviewsCount,
+        }
+      ) => {
+        return `${acc}${repository}\n  Issues created: ${issuesCreated}\n  Issue comments: ${issueCommentsCount}\n  PRs created: ${prsCreated}\n  PR reviews: ${prReviewsCount}\n`;
+      },
+      ""
+    );
+    console.log(
+      `Activities from ${term.startDate} to ${term.endDate}:\n${output}`
+    );
+
+    // csv 出力
+    const csvHeader =
+      "Repository,Issues created,Issue comments,PRs created,PR reviews\n";
+    const csvRows = activities.reduce(
+      (
+        acc,
+        {
+          repository,
+          issuesCreated,
+          issueCommentsCount,
+          prsCreated,
+          prReviewsCount,
+        }
+      ) => {
+        return `${acc}"${repository}",${issuesCreated},${issueCommentsCount},${prsCreated},${prReviewsCount}\n`;
+      },
+      ""
+    );
+    const csvContent = csvHeader + csvRows;
+    const filename = path.join(
+      outputDir,
+      `activities_${term.startDate}_${term.endDate}.csv`
+    );
+    fs.mkdirSync(outputDir, { recursive: true });
+    fs.writeFileSync(filename, csvContent);
+    console.log(`CSV file has been saved to ${filename}`);
+  });
 }
 
 main().catch((error) => console.error(error));

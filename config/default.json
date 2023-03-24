@@ -1,5 +1,17 @@
 {
   "githubApiUrl": "https://api.github.o-in.dwango.co.jp",
-  "startDate": "2022-10-01",
-  "endDate": "2023-03-31"
+  "terms": [
+    {
+      "startDate": "2021-10-01",
+      "endDate": "2022-03-31"
+    },
+    {
+      "startDate": "2022-04-01",
+      "endDate": "2022-09-31"
+    },
+    {
+      "startDate": "2022-10-01",
+      "endDate": "2023-03-31"
+    }
+  ]
 }
