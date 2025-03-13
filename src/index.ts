@@ -1,9 +1,12 @@
 import * as fs from "fs";
 import * as path from "path";
+import { fileURLToPath } from "url";
 import { Octokit, RestEndpointMethodTypes } from "@octokit/rest";
 import { retry } from "@octokit/plugin-retry";
 import config from "config";
 
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 const outputDir = path.join(__dirname, "../output");
 
 const RetryOctokit = Octokit.plugin(retry);
@@ -123,10 +126,10 @@ async function getAllActivity(
     auth: githubToken,
     baseUrl: apiUrl,
     request: {
-      // 最大10回リトライする
-      retries: 10,
-      // リトライの際には3秒インターバルを空ける
-      retryAfter: 3,
+      // 最大5回リトライする
+      retries: 5,
+      // リトライの際には1秒インターバルを空ける
+      retryAfter: 1,
     },
   });
   const repositories = await getRepositoriesFromOrg(octokit, orgName);
